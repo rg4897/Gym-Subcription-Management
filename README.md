@@ -1,6 +1,3 @@
-# GYM SUBCRIPTION MANAGEMENT APP
----
-
 # Gym Subscription Management System 💪
 
 A comprehensive React-based web application for managing gym memberships, payments, and member communications. Built with TypeScript and Tailwind CSS for a modern, responsive experience.
