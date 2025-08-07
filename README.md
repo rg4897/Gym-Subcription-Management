@@ -69,13 +69,13 @@ A comprehensive React-based web application for managing gym memberships, paymen
 
 3. **Start the development server**
    ```bash
-   npm start
+   npm run dev
    # or
    yarn start
    ```
 
 4. **Open your browser**
-   Navigate to `http://localhost:5174`
+   Navigate to `http://localhost:5173`
 
 ## 🔐 Demo Credentials
 
