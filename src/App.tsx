@@ -1,11 +1,12 @@
 
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { User, IndianRupee, MessageSquare, Shield, Plus, Edit, Trash2, Search, CheckCircle, AlertTriangle } from 'lucide-react';
+import { apiGet, apiPost, apiPut, apiDelete } from './lib/api';
 
 // Define types for Member, Notification, and PaymentRecord
 type Member = {
-  id: number;
+  id: string;
   name: string;
   phone: string;
   joinDate: string;
@@ -26,7 +27,7 @@ type Notification = {
 
 type PaymentRecord = {
   id: number;
-  memberId: number;
+  memberId: string;
   memberName: string;
   amount: number;
   receivedBy: string;
@@ -36,7 +37,7 @@ type PaymentRecord = {
 
 const GymSubscriptionApp = () => {
   const [currentView, setCurrentView] = useState('login');
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('token'));
   const [showTwoFA, setShowTwoFA] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedMemberForPayment, setSelectedMemberForPayment] = useState<Member | null>(null);
@@ -44,52 +45,7 @@ const GymSubscriptionApp = () => {
   const [paymentRecords, setPaymentRecords] = useState<PaymentRecord[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [adminList, setAdminList] = useState<string[]>(['Leo', 'Caroline', 'Mark', 'Alex', 'Diana']);
-  const [members, setMembers] = useState<Member[]>([
-    {
-      id: 1,
-      name: 'John Doe',
-      phone: '+91-9876543210',
-      joinDate: '2024-01-15',
-      lastPayment: '2024-06-15',
-      expiryDate: '2024-07-15',
-      monthlyFee: 2000,
-      status: 'expired',
-      pendingAmount: 2000
-    },
-    {
-      id: 2,
-      name: 'Jane Smith',
-      phone: '+91-9876543211',
-      joinDate: '2024-02-01',
-      lastPayment: '2024-07-01',
-      expiryDate: '2024-08-01',
-      monthlyFee: 2500,
-      status: 'active',
-      pendingAmount: 0
-    },
-    {
-      id: 3,
-      name: 'Mike Johnson',
-      phone: '+91-9876543212',
-      joinDate: '2024-03-10',
-      lastPayment: '2024-06-10',
-      expiryDate: '2024-07-10',
-      monthlyFee: 1800,
-      status: 'expired',
-      pendingAmount: 1800
-    },
-    {
-      id: 4,
-      name: 'Sarah Wilson',
-      phone: '+91-9876543213',
-      joinDate: '2024-04-05',
-      lastPayment: '2024-07-20',
-      expiryDate: '2024-08-20',
-      monthlyFee: 2200,
-      status: 'expiring_soon',
-      pendingAmount: 0
-    }
-  ]);
+  const [members, setMembers] = useState<Member[]>([]);
   
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [registerForm, setRegisterForm] = useState({ username: '', email: '', password: '', confirmPassword: '' });
@@ -123,63 +79,87 @@ const GymSubscriptionApp = () => {
       .reduce((sum, record) => sum + record.amount, 0)
   };
 
-  const handleLogin = () => {
-    if (loginForm.username && loginForm.password) {
-      setShowTwoFA(true);
-    }
-  };
-
-  const handleTwoFA = () => {
-    if (twoFACode === '123456') {
+  const handleLogin = async () => {
+    if (!(loginForm.username && loginForm.password)) return;
+    try {
+      const res = await apiPost('/auth/login', { email: loginForm.username, password: loginForm.password });
+      localStorage.setItem('token', res.token);
       setIsAuthenticated(true);
       setCurrentView('dashboard');
       setShowTwoFA(false);
-    } else {
-      alert('Invalid 2FA code. Try: 123456');
+      await loadMembers();
+    } catch (e) {
+      alert('Login failed');
     }
   };
 
-  const handleRegister = () => {
-    if (registerForm.password === registerForm.confirmPassword) {
+  const handleTwoFA = () => { setShowTwoFA(false); };
+
+  const handleRegister = async () => {
+    if (registerForm.password !== registerForm.confirmPassword) { alert('Passwords do not match!'); return; }
+    try {
+      await apiPost('/auth/register', { name: registerForm.username, email: registerForm.email, password: registerForm.password });
       alert('Registration successful! Please login.');
       setCurrentView('login');
-    } else {
-      alert('Passwords do not match!');
+    } catch (e) {
+      alert('Registration failed');
     }
   };
 
-  const handleAddMember = () => {
-    if (memberForm.name && memberForm.phone && memberForm.monthlyFee) {
-      const phoneExists = members.some(m => m.phone === memberForm.phone && m.id !== editingMember?.id);
-      if (phoneExists) {
-        alert('A member with this phone number already exists!');
-        return;
+  async function loadMembers() {
+    try {
+      const data = await apiGet('/members');
+      const mapped: Member[] = (data.members || []).map((m: any) => {
+        const fullName = [m.firstName, m.lastName].filter(Boolean).join(' ').trim() || m.name || 'Member';
+        const joinDate = m.joinedAt ? new Date(m.joinedAt).toISOString().split('T')[0] : '';
+        const lastPayment = m.subscription?.startDate ? new Date(m.subscription.startDate).toISOString().split('T')[0] : '';
+        const expiryDate = m.subscription?.endDate ? new Date(m.subscription.endDate).toISOString().split('T')[0] : '';
+        const monthlyFee = m.subscription?.price || 0;
+        const status = expiryDate ? (new Date(expiryDate) < new Date() ? 'expired' : 'active') : 'active';
+        return {
+          id: m._id,
+          name: fullName,
+          phone: m.phone || '',
+          joinDate,
+          lastPayment,
+          expiryDate,
+          monthlyFee,
+          status,
+          pendingAmount: 0,
+        } as Member;
+      });
+      setMembers(mapped);
+    } catch (e) {
+      // ignore for unauthenticated
+    }
+  }
+
+  useEffect(() => {
+    if (isAuthenticated) { loadMembers(); }
+  }, [isAuthenticated]);
+
+  const handleAddMember = async () => {
+    if (!(memberForm.name && memberForm.phone && memberForm.monthlyFee)) return;
+    try {
+      const [firstName, ...rest] = memberForm.name.trim().split(' ');
+      const lastName = rest.join(' ');
+      const created = await apiPost('/members', { firstName, lastName, phone: memberForm.phone, joinedAt: memberForm.joinDate });
+      const memberId = created.member?._id;
+      if (memberId) {
+        const startDate = memberForm.joinDate;
+        await apiPost(`/members/${memberId}/subscription`, {
+          planName: 'Monthly',
+          price: parseInt(memberForm.monthlyFee),
+          durationDays: 30,
+          startDate,
+        });
       }
-
-      const expiryDate = new Date(memberForm.joinDate);
-      expiryDate.setMonth(expiryDate.getMonth() + 1);
-
-      const newMember: Member = {
-        id: editingMember ? editingMember.id : Date.now(),
-        name: memberForm.name,
-        phone: memberForm.phone,
-        joinDate: memberForm.joinDate,
-        lastPayment: memberForm.joinDate,
-        expiryDate: expiryDate.toISOString().split('T')[0],
-        monthlyFee: parseInt(memberForm.monthlyFee),
-        status: 'active',
-        pendingAmount: 0
-      };
-
-      if (editingMember) {
-        setMembers(members.map(m => m.id === editingMember.id ? newMember : m));
-        setEditingMember(null);
-      } else {
-        setMembers([...members, newMember]);
-      }
-
+      await loadMembers();
+      setEditingMember(null);
       setMemberForm({ name: '', phone: '', monthlyFee: '', joinDate: new Date().toISOString().split('T')[0] });
       setCurrentView('members');
+    } catch (e) {
+      alert('Failed to save member');
     }
   };
 
@@ -194,9 +174,13 @@ const GymSubscriptionApp = () => {
     setCurrentView('add-member');
   };
 
-  const handleDeleteMember = (id: number) => {
-    if (window.confirm('Are you sure you want to delete this member?')) {
-      setMembers(members.filter(m => m.id !== id));
+  const handleDeleteMember = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this member?')) return;
+    try {
+      await apiDelete(`/members/${id}`);
+      await loadMembers();
+    } catch (e) {
+      alert('Failed to delete');
     }
   };
 
@@ -216,7 +200,7 @@ const GymSubscriptionApp = () => {
     alert(`SMS sent to ${member.name} (${member.phone})`);
   };
 
-  const markPaymentReceived = (memberId: number) => {
+  const markPaymentReceived = (memberId: string) => {
     const member = members.find(m => m.id === memberId);
     if (member) {
       setSelectedMemberForPayment(member);
@@ -225,49 +209,21 @@ const GymSubscriptionApp = () => {
     }
   };
 
-  const processPayment = () => {
-    if (!selectedMemberForPayment || !selectedAdmin) {
-      alert('Please select an admin to process the payment');
-      return;
+  const processPayment = async () => {
+    if (!selectedMemberForPayment || !selectedAdmin) { alert('Please select an admin to process the payment'); return; }
+    try {
+      const today = new Date();
+      const amount = selectedMemberForPayment.pendingAmount > 0 ? selectedMemberForPayment.pendingAmount : selectedMemberForPayment.monthlyFee;
+      await apiPost('/payments', { memberId: selectedMemberForPayment.id, amount, method: 'cash', status: 'success', notes: `Received by ${selectedAdmin}` });
+      await apiPost(`/members/${selectedMemberForPayment.id}/subscription`, { planName: 'Monthly', price: amount, durationDays: 30, startDate: today.toISOString() });
+      setShowPaymentModal(false);
+      setSelectedMemberForPayment(null);
+      setSelectedAdmin('');
+      await loadMembers();
+      alert(`Payment of ₹${amount} received from ${selectedMemberForPayment.name} by ${selectedAdmin}`);
+    } catch (e) {
+      alert('Failed to process payment');
     }
-
-    const today = new Date();
-    const nextMonth = new Date(today);
-    nextMonth.setMonth(nextMonth.getMonth() + 1);
-
-    // Update member record
-    setMembers(members.map(m => {
-      if (m.id === selectedMemberForPayment.id) {
-        return {
-          ...m,
-          lastPayment: today.toISOString().split('T')[0],
-          expiryDate: nextMonth.toISOString().split('T')[0],
-          pendingAmount: 0,
-          status: 'active'
-        };
-      }
-      return m;
-    }));
-
-    // Add payment record
-    const paymentRecord: PaymentRecord = {
-      id: Date.now(),
-      memberId: selectedMemberForPayment.id,
-      memberName: selectedMemberForPayment.name,
-      amount: selectedMemberForPayment.pendingAmount > 0 ? selectedMemberForPayment.pendingAmount : selectedMemberForPayment.monthlyFee,
-      receivedBy: selectedAdmin,
-      receivedDate: today.toISOString().split('T')[0],
-      timestamp: today
-    };
-
-    setPaymentRecords(prev => [paymentRecord, ...prev]);
-
-    // Close modal and reset
-    setShowPaymentModal(false);
-    setSelectedMemberForPayment(null);
-    setSelectedAdmin('');
-
-    alert(`Payment of ₹${paymentRecord.amount} received from ${selectedMemberForPayment.name} by ${selectedAdmin}`);
   };
 
   const filteredMembers = members.filter(member =>
@@ -460,6 +416,7 @@ const GymSubscriptionApp = () => {
             </div>
             <button
               onClick={() => {
+                localStorage.removeItem('token');
                 setIsAuthenticated(false);
                 setCurrentView('login');
               }}
